@@ -22,6 +22,7 @@
 
 package no.nordicsemi.android.dfu;
 
+import android.app.Application;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
@@ -47,10 +48,10 @@ import no.nordicsemi.android.error.LegacyDfuError;
 
 /* package */ class LegacyDfuImpl extends BaseCustomDfuImpl {
 	// UUIDs used by the DFU
-	protected static final UUID DFU_SERVICE_UUID = new UUID(0x000015301212EFDEL, 0x1523785FEABCD123L);
-	protected static final UUID DFU_CONTROL_POINT_UUID = new UUID(0x000015311212EFDEL, 0x1523785FEABCD123L);
-	protected static final UUID DFU_PACKET_UUID = new UUID(0x000015321212EFDEL, 0x1523785FEABCD123L);
-	protected static final UUID DFU_VERSION = new UUID(0x000015341212EFDEL, 0x1523785FEABCD123L);
+	protected UUID DFU_SERVICE_UUID = new UUID(0x000015301212EFDEL, 0x1523785FEABCD123L);
+	protected UUID DFU_CONTROL_POINT_UUID = new UUID(0x000015311212EFDEL, 0x1523785FEABCD123L);
+	protected UUID DFU_PACKET_UUID = new UUID(0x000015321212EFDEL, 0x1523785FEABCD123L);
+	protected UUID DFU_VERSION = new UUID(0x000015341212EFDEL, 0x1523785FEABCD123L);
 
 	private static final int DFU_STATUS_SUCCESS = 1;
 	// Operation codes and packets
@@ -83,6 +84,8 @@ import no.nordicsemi.android.error.LegacyDfuError;
 	private boolean mImageSizeInProgress;
 
 	private final LegacyBluetoothCallback mBluetoothCallback = new LegacyBluetoothCallback();
+
+
 
 	protected class LegacyBluetoothCallback extends BaseCustomBluetoothCallback {
 		@Override
@@ -125,6 +128,11 @@ import no.nordicsemi.android.error.LegacyDfuError;
 
 	/* package */ LegacyDfuImpl(final Intent intent, final DfuBaseService service) {
 		super(intent, service);
+
+		DFU_SERVICE_UUID = UUID.fromString(service.getApplicationContext().getResources().getString(R.string.NORDIC_DFU_service_uuid));
+		DFU_CONTROL_POINT_UUID = UUID.fromString(service.getApplicationContext().getResources().getString(R.string.NORDIC_DFU_control_point_uuid));
+		DFU_PACKET_UUID = UUID.fromString(service.getApplicationContext().getResources().getString(R.string.NORDIC_DFU_packet_uuid));
+		DFU_VERSION = UUID.fromString(service.getApplicationContext().getResources().getString(R.string.NORDIC_DFU_version_uuid));
 	}
 
 	@Override

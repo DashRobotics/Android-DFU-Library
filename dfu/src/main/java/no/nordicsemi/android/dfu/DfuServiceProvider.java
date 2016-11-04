@@ -33,9 +33,10 @@ import android.content.Intent;
 		if (secureService != null) {
 			return new SecureDfuImpl(intent, service);
 		}
-		final BluetoothGattService legacyService = gatt.getService(LegacyDfuImpl.DFU_SERVICE_UUID);
+		LegacyDfuImpl dfuImpl = new LegacyDfuImpl(intent, service);
+		final BluetoothGattService legacyService = gatt.getService(dfuImpl.getDfuServiceUUID());
 		if (legacyService != null) {
-			return new LegacyDfuImpl(intent, service);
+			return dfuImpl;
 		}
 		return null;
 	}

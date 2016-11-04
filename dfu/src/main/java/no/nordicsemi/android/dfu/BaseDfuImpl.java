@@ -45,9 +45,9 @@ import no.nordicsemi.android.dfu.internal.exception.UploadAbortedException;
 /* package */ abstract class BaseDfuImpl implements DfuService {
 	private static final String TAG = "DfuImpl";
 
-	protected static final UUID GENERIC_ATTRIBUTE_SERVICE_UUID = new UUID(0x0000180100001000L, 0x800000805F9B34FBL);
-	protected static final UUID SERVICE_CHANGED_UUID = new UUID(0x00002A0500001000L, 0x800000805F9B34FBL);
-	protected static final UUID CLIENT_CHARACTERISTIC_CONFIG = new UUID(0x0000290200001000L, 0x800000805f9b34fbL);
+	protected UUID GENERIC_ATTRIBUTE_SERVICE_UUID = null;
+	protected UUID SERVICE_CHANGED_UUID = null;
+	protected UUID CLIENT_CHARACTERISTIC_CONFIG = null;
 	protected static final int NOTIFICATIONS = 1;
 	protected static final int INDICATIONS = 2;
 
@@ -191,6 +191,10 @@ import no.nordicsemi.android.dfu.internal.exception.UploadAbortedException;
 	/* package */ BaseDfuImpl(final Intent intent, final DfuBaseService service) {
 		mService = service;
 		mConnected = true; // the device is connected when impl object it created
+
+		GENERIC_ATTRIBUTE_SERVICE_UUID = UUID.fromString(service.getString(R.string.NORDIC_DFU_generic_attribute_service_uuid));
+		SERVICE_CHANGED_UUID = UUID.fromString(service.getString(R.string.NORDIC_DFU_service_changed_uuid));
+		CLIENT_CHARACTERISTIC_CONFIG = UUID.fromString(service.getString(R.string.NORDIC_DFU_client_characteristic_config_uuid));
 	}
 
 	@Override

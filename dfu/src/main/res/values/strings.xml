@@ -26,5 +26,13 @@
     <string name="dfu_status_aborted_msg">Application upload has been canceled.</string>
     <string name="dfu_status_disconnecting_msg">Disconnecting from %s&#8230;</string>
     <string name="dfu_status_error_msg">DFU process failed.</string>
-    
+
+    <string name="NORDIC_DFU_service_uuid">00001530-1212-efde-1523-785feabcd123</string>
+    <string name="NORDIC_DFU_control_point_uuid">00001531-1212-efde-1523-785feabcd123</string>
+    <string name="NORDIC_DFU_packet_uuid">00001532-1212-efde-1523-785feabcd123</string>
+    <string name="NORDIC_DFU_version_uuid">00001534-6b09-45c8-be6d-4bb4e0471435</string>
+    <string name="NORDIC_DFU_generic_attribute_service_uuid">00001801-0000-1000-8000-00805f9b34fb</string>
+    <string name="NORDIC_DFU_service_changed_uuid">00002a05-0000-1000-8000-00805f9b34fb</string>
+    <string name="NORDIC_DFU_client_characteristic_config_uuid">00002902-0000-1000-8000-00805f9b34fb</string>
+
 </resources>
