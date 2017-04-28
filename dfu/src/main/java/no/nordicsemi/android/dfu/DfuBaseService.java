@@ -129,9 +129,9 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	 * If an application is being updated on a bonded device with the DFU Bootloader that has been configured to preserve the bond information for the new application,
 	 * set it to <code>true</code>.</p>
 	 *
-	 * <p>By default the DFU Bootloader clears the whole application's memory. It may be however configured in the \Nordic\nrf51\components\libraries\bootloader_dfu\dfu_types.h
+	 * <p>By default the Legacy DFU Bootloader clears the whole application's memory. It may be however configured in the \Nordic\nrf51\components\libraries\bootloader_dfu\dfu_types.h
 	 * file (sdk 11, line 76: <code>#define DFU_APP_DATA_RESERVED 0x0000</code>) to preserve some pages. The BLE_APP_HRM_DFU sample app stores the LTK and System Attributes in the first
-	 * two pages, so in order to preserve the bond information this value should be changed to 0x0800 or more.
+	 * two pages, so in order to preserve the bond information this value should be changed to 0x0800 or more. For Secure DFU this value is by default set to 3 pages.
 	 * When those data are preserved, the new Application will notify the app with the Service Changed indication when launched for the first time. Otherwise this
 	 * service will remove the bond information from the phone and force to refresh the device cache (see {@link #refreshDeviceCache(android.bluetooth.BluetoothGatt, boolean)}).</p>
 	 *
@@ -150,6 +150,38 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	 * application, which may (and usually does) have more services. In such case set the value of this property to true.
 	 */
 	public static final String EXTRA_FORCE_DFU = "no.nordicsemi.android.dfu.extra.EXTRA_FORCE_DFU";
+	/**
+	 * Set this flag to true to enable experimental buttonless feature in Secure DFU. When the
+	 * experimental Buttonless DFU Service is found on a device, the service will use it to
+	 * switch the device to the bootloader mode, connect to it in that mode and proceed with DFU.
+	 * <p>
+	 * <b>Please, read the information below before setting it to true.</b>
+	 * <p>
+	 * In the SDK 12.x the Buttonless DFU feature for Secure DFU was experimental.
+	 * It is NOT recommended to use it: it was not properly tested, had implementation bugs
+	 * (e.g. https://devzone.nordicsemi.com/question/100609/sdk-12-bootloader-erased-after-programming/) and
+	 * does not required encryption and therefore may lead to DOS attack (anyone can use it to switch the device
+	 * to bootloader mode). However, as there is no other way to trigger bootloader mode on devices
+	 * without a button, this DFU Library supports this service, but the feature must be explicitly enabled here.
+	 * Be aware, that setting this flag to false will no protect your devices from this kind of attacks, as
+	 * an attacker may use another app for that purpose. To be sure your device is secure remove this
+	 * experimental service from your device.
+	 * <p>
+	 * <b>Spec:</b><br>
+	 * Buttonless DFU Service UUID: 8E400001-F315-4F60-9FB8-838830DAEA50<br>
+	 * Buttonless DFU characteristic UUID: 8E400001-F315-4F60-9FB8-838830DAEA50 (the same)<br>
+	 * Enter Bootloader Op Code: 0x01<br>
+	 * Correct return value: 0x20-01-01 , where:<br>
+	 * 0x20 - Response Op Code<br>
+	 * 0x01 - Request Code<br>
+	 * 0x01 - Success<br>
+	 * The device should disconnect and restart in DFU mode after sending the notification.
+	 * <p>
+	 * In SDK 13 this issue will be fixed by a proper implementation (bonding required,
+	 * passing bond information to the bootloader, encryption, well tested). It is recommended to use this
+	 * new service when SDK 13 (or later) is out. TODO: fix the docs when SDK 13 is out.
+	 */
+	public static final String EXTRA_UNSAFE_EXPERIMENTAL_BUTTONLESS_DFU = "no.nordicsemi.android.dfu.extra.EXTRA_UNSAFE_EXPERIMENTAL_BUTTONLESS_DFU";
 	/**
 	 * This property must contain a boolean value.
 	 * <p>If true the Packet Receipt Notification procedure will be enabled. See DFU documentation on http://infocenter.nordicsemi.com for more details.
@@ -431,7 +463,9 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	public static final int ERROR_SERVICE_NOT_FOUND = ERROR_MASK | 0x06;
 	/**
 	 * Thrown when the required DFU service has been found but at least one of the DFU characteristics is absent.
+	 * @deprecated This error will no longer be thrown. {@link #ERROR_SERVICE_NOT_FOUND} will be thrown instead.
 	 */
+	@Deprecated
 	public static final int ERROR_CHARACTERISTICS_NOT_FOUND = ERROR_MASK | 0x07;
 	/**
 	 * Thrown when unknown response has been obtained from the target. The DFU target must follow specification.
@@ -457,6 +491,10 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	 * Thrown when the received CRC does not match with the calculated one. The service will try 3 times to send the data, and if the CRC fails each time this error will be thrown.
 	 */
 	public static final int ERROR_CRC_ERROR = ERROR_MASK | 0x0D;
+	/**
+	 * Thrown when device had to be paired before the DFU process was started.
+	 */
+	public static final int ERROR_DEVICE_NOT_BONDED = ERROR_MASK | 0x0E;
 	/**
 	 * Flag set when the DFU target returned a DFU error. Look for DFU specification to get error codes.
 	 */
@@ -536,6 +574,12 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	 */
 	public static final int ACTION_ABORT = 2;
 
+	public static final String EXTRA_CUSTOM_UUIDS_FOR_LEGACY_DFU = "no.nordicsemi.android.dfu.extra.EXTRA_CUSTOM_UUIDS_FOR_LEGACY_DFU";
+	public static final String EXTRA_CUSTOM_UUIDS_FOR_SECURE_DFU = "no.nordicsemi.android.dfu.extra.EXTRA_CUSTOM_UUIDS_FOR_SECURE_DFU";
+	public static final String EXTRA_CUSTOM_UUIDS_FOR_EXPERIMENTAL_BUTTONLESS_DFU = "no.nordicsemi.android.dfu.extra.EXTRA_CUSTOM_UUIDS_FOR_EXPERIMENTAL_BUTTONLESS_DFU";
+	public static final String EXTRA_CUSTOM_UUIDS_FOR_BUTTONLESS_DFU_WITHOUT_BOND_SHARING = "no.nordicsemi.android.dfu.extra.EXTRA_CUSTOM_UUIDS_FOR_BUTTONLESS_DFU_WITHOUT_BOND_SHARING";
+	public static final String EXTRA_CUSTOM_UUIDS_FOR_BUTTONLESS_DFU_WITH_BOND_SHARING = "no.nordicsemi.android.dfu.extra.EXTRA_CUSTOM_UUIDS_FOR_BUTTONLESS_DFU_WITH_BOND_SHARING";
+
 	// DFU status values. Those values are now implementation dependent.
 	@Deprecated
 	public static final int DFU_STATUS_SUCCESS = 1;
@@ -582,7 +626,7 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	/** Flag set to true if sending was aborted. */
 	private boolean mAborted;
 
-	private BaseDfuImpl mDfuServiceImpl;
+	private DfuCallback mDfuServiceImpl;
 
 	private final BroadcastReceiver mDfuActionReceiver = new BroadcastReceiver() {
 		@Override
@@ -640,6 +684,7 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 			final String action = intent.getAction();
 
 			logi("Action received: " + action);
+			sendLogBroadcast(LOG_LEVEL_DEBUG, "[Broadcast] Action received: " + action);
 			mConnectionState = STATE_DISCONNECTED;
 
 			if (mDfuServiceImpl != null)
@@ -795,6 +840,17 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	}
 
 	@Override
+	public void onTaskRemoved(final Intent rootIntent) {
+		super.onTaskRemoved(rootIntent);
+		// This method is called when user removed the app from Recents.
+		// By default, the service will be killed and recreated immediately after that,
+		// but we don't want it. User removed the task, so let's cancel DFU.
+		final NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+		manager.cancel(NOTIFICATION_ID);
+		stopSelf();
+	}
+
+	@Override
 	public void onDestroy() {
 		super.onDestroy();
 
@@ -837,6 +893,8 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 			report(ERROR_FILE_TYPE_UNSUPPORTED);
 			return;
 		}
+
+		UuidHelper.assignCustomUuids(intent);
 
 		mDeviceAddress = deviceAddress;
 		mDeviceName = deviceName;
@@ -954,7 +1012,7 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 			mProgressInfo = new DfuProgressInfo(this);
 
 			if (mAborted) {
-				logi("Upload aborted");
+				logw("Upload aborted");
 				sendLogBroadcast(LOG_LEVEL_WARNING, "Upload aborted");
 				mProgressInfo.setProgress(PROGRESS_ABORTED);
 				return;
@@ -1015,12 +1073,14 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 				return;
 			}
 			if (mAborted) {
-				logi("Upload aborted");
+				logw("Upload aborted");
 				sendLogBroadcast(LOG_LEVEL_WARNING, "Upload aborted");
 				terminateConnection(gatt, 0);
 				mProgressInfo.setProgress(PROGRESS_ABORTED);
 				return;
 			}
+			sendLogBroadcast(LOG_LEVEL_INFO, "Services discovered");
+
 			// Reset the attempt counter
 			intent.putExtra(EXTRA_ATTEMPT, 0);
 
@@ -1029,26 +1089,22 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 				/*
 				 * Device services were discovered. Based on them we may now choose the implementation.
 				 */
-				dfuService = mDfuServiceImpl = DfuServiceProvider.getDfuImpl(intent, this, gatt);
-				if (dfuService == null || !dfuService.hasRequiredService(gatt)) {
-					sendLogBroadcast(LOG_LEVEL_WARNING, "Connected. DFU Service not found");
+				final DfuServiceProvider serviceProvider = new DfuServiceProvider();
+				mDfuServiceImpl = serviceProvider; // This is required if the provider is now able read data from the device
+				mDfuServiceImpl = dfuService = serviceProvider.getServiceImpl(intent, this, gatt);
+				if (dfuService == null) {
+					Log.w(TAG, "DFU Service not found.");
+					sendLogBroadcast(LOG_LEVEL_WARNING, "DFU Service not found");
 					terminateConnection(gatt, ERROR_SERVICE_NOT_FOUND);
 					return;
 				}
-				if (!dfuService.hasRequiredCharacteristics(gatt)) {
-					sendLogBroadcast(LOG_LEVEL_WARNING, "Connected. DFU Characteristics not found");
-					terminateConnection(gatt, DfuBaseService.ERROR_CHARACTERISTICS_NOT_FOUND);
-					return;
-				}
-
-				sendLogBroadcast(LOG_LEVEL_INFO, "Services discovered");
 
 				// Begin the DFU depending on the implementation
 				if (dfuService.initialize(intent, gatt, fileType, is, initIs)) {
 					dfuService.performDfu(intent);
 				}
 			} catch (final UploadAbortedException e) {
-				logi("Upload aborted");
+				logw("Upload aborted");
 				sendLogBroadcast(LOG_LEVEL_WARNING, "Upload aborted");
 				terminateConnection(gatt, 0);
 				mProgressInfo.setProgress(PROGRESS_ABORTED);
@@ -1432,6 +1488,8 @@ public abstract class DfuBaseService extends IntentService implements DfuProgres
 	 * <li>{@link #EXTRA_DEVICE_NAME} - target device name</li>
 	 * <li>{@link #EXTRA_PROGRESS} - the connection state (values &lt; 0)*, current progress (0-100) or error number if {@link #ERROR_MASK} bit set.</li>
 	 * </ul>
+	 * If your application disabled DFU notifications by calling {@link DfuServiceInitiator#setDisableNotification(boolean)} with parameter true this method will never be called
+	 * and may return null.<br>
 	 * _______________________________<br>
 	 * * - connection state constants:
 	 * <ul>

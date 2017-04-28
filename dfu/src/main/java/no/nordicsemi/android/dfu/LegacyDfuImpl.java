@@ -22,17 +22,12 @@
 
 package no.nordicsemi.android.dfu;
 
-import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.SystemClock;
-import android.preference.PreferenceManager;
 
-import java.io.IOException;
 import java.util.UUID;
 
 import no.nordicsemi.android.dfu.internal.ArchiveInputStream;
@@ -41,16 +36,19 @@ import no.nordicsemi.android.dfu.internal.exception.DfuException;
 import no.nordicsemi.android.dfu.internal.exception.RemoteDfuException;
 import no.nordicsemi.android.dfu.internal.exception.UnknownResponseException;
 import no.nordicsemi.android.dfu.internal.exception.UploadAbortedException;
-import no.nordicsemi.android.dfu.internal.scanner.BootloaderScannerFactory;
-import no.nordicsemi.android.error.GattError;
 import no.nordicsemi.android.error.LegacyDfuError;
 
 /* package */ class LegacyDfuImpl extends BaseCustomDfuImpl {
 	// UUIDs used by the DFU
-	protected static final UUID DFU_SERVICE_UUID = new UUID(0x000015301212EFDEL, 0x1523785FEABCD123L);
-	protected static final UUID DFU_CONTROL_POINT_UUID = new UUID(0x000015311212EFDEL, 0x1523785FEABCD123L);
-	protected static final UUID DFU_PACKET_UUID = new UUID(0x000015321212EFDEL, 0x1523785FEABCD123L);
-	protected static final UUID DFU_VERSION = new UUID(0x000015341212EFDEL, 0x1523785FEABCD123L);
+	protected static final UUID DEFAULT_DFU_SERVICE_UUID       = new UUID(0x000015301212EFDEL, 0x1523785FEABCD123L);
+	protected static final UUID DEFAULT_DFU_CONTROL_POINT_UUID = new UUID(0x000015311212EFDEL, 0x1523785FEABCD123L);
+	protected static final UUID DEFAULT_DFU_PACKET_UUID        = new UUID(0x000015321212EFDEL, 0x1523785FEABCD123L);
+	protected static final UUID DEFAULT_DFU_VERSION_UUID       = new UUID(0x000015341212EFDEL, 0x1523785FEABCD123L);
+
+	protected static UUID DFU_SERVICE_UUID       = DEFAULT_DFU_SERVICE_UUID;
+	protected static UUID DFU_CONTROL_POINT_UUID = DEFAULT_DFU_CONTROL_POINT_UUID;
+	protected static UUID DFU_PACKET_UUID        = DEFAULT_DFU_PACKET_UUID;
+	protected static UUID DFU_VERSION_UUID       = DEFAULT_DFU_VERSION_UUID;
 
 	private static final int DFU_STATUS_SUCCESS = 1;
 	// Operation codes and packets
@@ -65,6 +63,7 @@ import no.nordicsemi.android.error.LegacyDfuError;
 	private static final int OP_CODE_RESPONSE_CODE_KEY = 0x10; // 16
 	private static final int OP_CODE_PACKET_RECEIPT_NOTIF_KEY = 0x11; // 11
 	private static final byte[] OP_CODE_START_DFU = new byte[]{OP_CODE_START_DFU_KEY, 0x00};
+	private static final byte[] OP_CODE_INIT_DFU_PARAMS = new byte[]{OP_CODE_INIT_DFU_PARAMS_KEY}; // SDK 6.0.0 or older
 	private static final byte[] OP_CODE_INIT_DFU_PARAMS_START = new byte[]{OP_CODE_INIT_DFU_PARAMS_KEY, 0x00};
 	private static final byte[] OP_CODE_INIT_DFU_PARAMS_COMPLETE = new byte[]{OP_CODE_INIT_DFU_PARAMS_KEY, 0x01};
 	private static final byte[] OP_CODE_RECEIVE_FIRMWARE_IMAGE = new byte[]{OP_CODE_RECEIVE_FIRMWARE_IMAGE_KEY};
@@ -128,21 +127,17 @@ import no.nordicsemi.android.error.LegacyDfuError;
 	}
 
 	@Override
-	public boolean hasRequiredService(final BluetoothGatt gatt) {
+	public boolean isClientCompatible(final Intent intent, final BluetoothGatt gatt) {
 		final BluetoothGattService dfuService = gatt.getService(DFU_SERVICE_UUID);
-		return dfuService != null;
-	}
-
-	@Override
-	public boolean hasRequiredCharacteristics(final BluetoothGatt gatt) {
-		final BluetoothGattService dfuService = gatt.getService(DFU_SERVICE_UUID);
+		if (dfuService == null)
+			return false;
 		mControlPointCharacteristic = dfuService.getCharacteristic(DFU_CONTROL_POINT_UUID);
 		mPacketCharacteristic = dfuService.getCharacteristic(DFU_PACKET_UUID);
 		return mControlPointCharacteristic != null && mPacketCharacteristic != null;
 	}
 
 	@Override
-	protected BaseCustomBluetoothCallback getGattCallback() {
+	public BaseCustomBluetoothCallback getGattCallback() {
 		return mBluetoothCallback;
 	}
 
@@ -163,6 +158,7 @@ import no.nordicsemi.android.error.LegacyDfuError;
 
 	@Override
 	public void performDfu(final Intent intent) throws DfuException, DeviceDisconnectedException, UploadAbortedException {
+		logw("Legacy DFU bootloader found");
 		mProgressInfo.setProgress(DfuBaseService.PROGRESS_STARTING);
 
 		// Add one second delay to avoid the traffic jam before the DFU mode is enabled
@@ -175,140 +171,11 @@ import no.nordicsemi.android.error.LegacyDfuError;
 		final BluetoothGatt gatt = mGatt;
 
 		/*
-		 * The DFU Version characteristic has been added in SDK 7.0.
-		 *
-		 * It may return version number in 2 bytes (f.e. 0x05-00), where the first one is the minor version and the second one is the major version.
-		 * In case of 0x05-00 the DFU has the version 0.5.
-		 *
-		 * Currently the following version numbers are supported:
-		 *
-		 *   - 0.1 (0x01-00) - The service is connected to the device in application mode, not to the DFU Bootloader. The application supports Long Term Key (LTK)
-		 *                     sharing and buttonless update. Enable notifications on the DFU Control Point characteristic and write 0x01-04 into it to jump to the Bootloader.
-		 *                     Check the Bootloader version again for more info about the Bootloader version.
-		 *
-		 *   - 0.5 (0x05-00) - The device is in the OTA-DFU Bootloader mode. The Bootloader supports LTK sharing and requires the Extended Init Packet. It supports
-		 *                     a SoftDevice, Bootloader or an Application update. SoftDevice and a Bootloader may be sent together.
-		 *
-		 *   - 0.6 (0x06-00) - The device is in the OTA-DFU Bootloader mode. The DFU Bootloader is from SDK 8.0 and has the same features as version 0.5. It also
-		 *                     supports also sending Service Changed notification in application mode after successful or aborted upload so no refreshing services is required.
+		 * DFU Version characteristic has been read by the LegacyButtonlessDfuImpl#isClientCompatible(...) while determining implementation.
+		 * No need to read it again.
 		 */
-		final BluetoothGattCharacteristic versionCharacteristic = gatt.getService(DFU_SERVICE_UUID).getCharacteristic(DFU_VERSION); // this may be null for older versions of the Bootloader
-
-		/*
-		 * Read the version number if available.
-		 * The version number consists of 2 bytes: major and minor. Therefore f.e. the version 5 (00-05) can be read as 0.5.
-		 *
-		 * Currently supported versions are:
-		 *  * no DFU Version characteristic - we may be either in the bootloader mode or in the app mode. The DFU Bootloader from SDK 6.1 did not have this characteristic,
-		 *                                    but it also supported the buttonless update. Usually, the application must have had some additional services (like Heart Rate, etc)
-		 *                                    so if the number of services greater is than 3 (Generic Access, Generic Attribute, DFU Service) we can also assume we are in
-		 *                                    the application mode and jump is required.
-		 *
-		 *  * version = 1 (major = 0, minor = 1) - Application with DFU buttonless update supported. A jump to DFU mode is required.
-		 *
-		 *  * version = 5 (major = 0, minor = 5) - Since version 5 the Extended Init Packet is required. Keep in mind that if we are in the app mode the DFU Version characteristic
-		 *  								  still returns version = 1, as it is independent from the DFU Bootloader. The version = 5 is reported only after successful jump to
-		 *  								  the DFU mode. In version = 5 the bond information is always lost. Released in SDK 7.0.0.
-		 *
-		 *  * version = 6 (major = 0, minor = 6) - The DFU Bootloader may be configured to keep the bond information after application update. Please, see the {@link #EXTRA_KEEP_BOND}
-		 *  								  documentation for more information about how to enable the feature (disabled by default). A change in the DFU bootloader source and
-		 *  								  setting the {@link DfuServiceInitiator#setKeepBond} to true is required. Released in SDK 8.0.0.
-		 *
-		 *  * version = 7 (major = 0, minor = 7) - The SHA-256 firmware hash is used in the Extended Init Packet instead of CRC-16. This feature is transparent for the DFU Service.
-		 *
-		 *  * version = 8 (major = 0, minor = 8) - The Extended Init Packet is signed using the private key. The bootloader, using the public key, is able to verify the content.
-		 *  								  Released in SDK 9.0.0 as experimental feature.
-		 *  								  Caution! The firmware type (Application, Bootloader, SoftDevice or SoftDevice+Bootloader) is not encrypted as it is not a part of the
-		 *  								  Extended Init Packet. A change in the protocol will be required to fix this issue.
-		 */
-		int version = 0;
-		if (versionCharacteristic != null) {
-			version = readVersion(versionCharacteristic);
-			final int minor = (version & 0x0F);
-			final int major = (version >> 8);
-			logi("Version number read: " + major + "." + minor);
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Version number read: " + major + "." + minor);
-		} else {
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "DFU Version characteristic not found");
-		}
-
-		/*
-		 * In case of old DFU bootloader versions, where there was no DFU Version characteristic, the service was unable to determine whether it was in the application mode, or in
-		 * bootloader mode. In that case, if the following boolean value is set to false (default) the bootloader will count number of services on the device. In case of 3 service
-		 * it will start the DFU procedure (Generic Access, Generic Attribute, DFU Service). If more services will be found, it assumes that a jump to the DFU bootloader is required.
-		 *
-		 * However, in some cases, the DFU bootloader is used to flash firmware on other chip via nRF5x. In that case the application may support DFU operation without switching
-		 * to the bootloader mode itself.
-		 *
-		 * For newer implementations of DFU in such case the DFU Version should return value other than 0x0100 (major 0, minor 1) which means that the application does not support
-		 * DFU process itself but rather support jump to the bootloader mode.
-		 */
-		final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(mService);
-		boolean assumeDfuMode = preferences.getBoolean(DfuSettingsConstants.SETTINGS_ASSUME_DFU_NODE, false);
-		if (intent.hasExtra(DfuBaseService.EXTRA_FORCE_DFU))
-			assumeDfuMode = intent.getBooleanExtra(DfuBaseService.EXTRA_FORCE_DFU, false);
-
-		/*
-		 *  Check if we are in the DFU Bootloader or in the Application that supports the buttonless update.
-		 *
-		 *  In the DFU from SDK 6.1, which was also supporting the buttonless update, there was no DFU Version characteristic. In that case we may find out whether
-		 *  we are in the bootloader or application by simply checking the number of characteristics. This may be overridden by setting the DfuSettingsConstants.SETTINGS_ASSUME_DFU_NODE
-		 *  property to true in Shared Preferences.
-		 */
-		if (version == 1 || (!assumeDfuMode && version == 0 && gatt.getServices().size() > 3 /* No DFU Version char but more services than Generic Access, Generic Attribute, DFU Service */)) {
-			// The service is connected to the application, not to the bootloader
-			logw("Application with buttonless update found");
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, "Application with buttonless update found");
-
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_VERBOSE, "Jumping to the DFU Bootloader...");
-
-			// Enable notifications
-			enableCCCD(mControlPointCharacteristic, NOTIFICATIONS);
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Notifications enabled");
-
-			// Wait a second here before going further
-			// Related:
-			//   pull request: https://github.com/NordicSemiconductor/Android-DFU-Library/pull/11
-			mService.waitFor(1000);
-			// End
-
-			// Send 'jump to bootloader command' (Start DFU)
-			mProgressInfo.setProgress(DfuBaseService.PROGRESS_ENABLING_DFU_MODE);
-			OP_CODE_START_DFU[1] = 0x04;
-			logi("Sending Start DFU command (Op Code = 1, Upload Mode = 4)");
-			writeOpCode(mControlPointCharacteristic, OP_CODE_START_DFU, true);
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Jump to bootloader sent (Op Code = 1, Upload Mode = 4)");
-
-			// The device will reset so we don't have to send Disconnect signal.
-			mService.waitUntilDisconnected();
-			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_INFO, "Disconnected by the remote device");
-
-			/*
-			 * We would like to avoid using the hack with refreshing the device (refresh method is not in the public API). The refresh method clears the cached services and causes a
-			 * service discovery afterwards (when connected). Android, however, does it itself when receive the Service Changed indication when bonded.
-			 * In case of unpaired device we may either refresh the services manually (using the hack), or include the Service Changed characteristic.
-			 *
-			 * According to Bluetooth Core 4.0 (and 4.1) specification:
-			 *
-			 * [Vol. 3, Part G, 2.5.2 - Attribute Caching]
-			 * Note: Clients without a trusted relationship must perform service discovery on each connection if the server supports the Services Changed characteristic.
-			 *
-			 * However, as up to Android 5 the system does NOT respect this requirement and servers are cached for every device, even if Service Changed is enabled -> Android BUG?
-			 * For bonded devices Android performs service re-discovery when SC indication is received.
-			 */
-			final BluetoothGattService gas = gatt.getService(GENERIC_ATTRIBUTE_SERVICE_UUID);
-			final boolean hasServiceChanged = gas != null && gas.getCharacteristic(SERVICE_CHANGED_UUID) != null;
-			mService.refreshDeviceCache(gatt, !hasServiceChanged);
-
-			// Close the device
-			mService.close(gatt);
-
-			logi("Starting service that will connect to the DFU bootloader");
-			final Intent newIntent = new Intent();
-			newIntent.fillIn(intent, Intent.FILL_IN_COMPONENT | Intent.FILL_IN_PACKAGE);
-			mService.startService(newIntent);
-			return;
-		}
+		final BluetoothGattCharacteristic versionCharacteristic = gatt.getService(DFU_SERVICE_UUID).getCharacteristic(DFU_VERSION_UUID); // this may be null for older versions of the Bootloader
+		final int version = readVersion(versionCharacteristic);
 
 		/*
 		 * If the DFU Version characteristic is present and the version returned from it is greater or equal to 0.5, the Extended Init Packet is required.
@@ -374,11 +241,21 @@ import no.nordicsemi.android.error.LegacyDfuError;
 			// The sizes above may be overwritten if a ZIP file was passed
 			if (mFirmwareStream instanceof ArchiveInputStream) {
 				final ArchiveInputStream zhis = (ArchiveInputStream) mFirmwareStream;
+				if (zhis.isSecureDfuRequired()) {
+					loge("Secure DFU is required to upload selected firmware");
+					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_ERROR, "The device does not support given firmware.");
+					logi("Sending Reset command (Op Code = 6)");
+					writeOpCode(mControlPointCharacteristic, OP_CODE_RESET);
+					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Reset request sent");
+					mService.terminateConnection(gatt, DfuBaseService.ERROR_FILE_INVALID);
+					return;
+				}
 				softDeviceImageSize = zhis.softDeviceImageSize();
 				bootloaderImageSize = zhis.bootloaderImageSize();
 				appImageSize = zhis.applicationImageSize();
 			}
 
+			boolean extendedInitPacketSupported = true;
 			try {
 				OP_CODE_START_DFU[1] = (byte) fileType;
 
@@ -395,44 +272,24 @@ import no.nordicsemi.android.error.LegacyDfuError;
 				// A notification will come with confirmation. Let's wait for it a bit
 				response = readNotificationResponse();
 
-						/*
-						 * The response received from the DFU device contains:
-						 * +---------+--------+----------------------------------------------------+
-						 * | byte no | value  | description                                        |
-						 * +---------+--------+----------------------------------------------------+
-						 * | 0       | 16     | Response code                                      |
-						 * | 1       | 1      | The Op Code of a request that this response is for |
-						 * | 2       | STATUS | See DFU_STATUS_* for status codes                  |
-						 * +---------+--------+----------------------------------------------------+
-						 */
+				/*
+				 * The response received from the DFU device contains:
+				 * +---------+--------+----------------------------------------------------+
+				 * | byte no | value  | description                                        |
+				 * +---------+--------+----------------------------------------------------+
+				 * | 0       | 16     | Response code                                      |
+				 * | 1       | 1      | The Op Code of a request that this response is for |
+				 * | 2       | STATUS | Status code                                        |
+				 * +---------+--------+----------------------------------------------------+
+				 */
 				status = getStatusCode(response, OP_CODE_START_DFU_KEY);
 				mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Response received (Op Code = " + response[1] + " Status = " + status + ")");
+
 				// If upload was not completed in the previous connection the INVALID_STATE status will be reported.
 				// Theoretically, the connection could be resumed from that point, but there is no guarantee, that the same firmware
 				// is to be uploaded now. It's safer to reset the device and start DFU again.
 				if (status == LegacyDfuError.INVALID_STATE) {
-					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, "Last upload interrupted. Restarting device...");
-					// Send 'jump to bootloader command' (Start DFU)
-					mProgressInfo.setProgress(DfuBaseService.PROGRESS_DISCONNECTING);
-					logi("Sending Reset command (Op Code = 6)");
-					writeOpCode(mControlPointCharacteristic, OP_CODE_RESET);
-					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Reset request sent");
-
-					// The device will reset so we don't have to send Disconnect signal.
-					mService.waitUntilDisconnected();
-					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_INFO, "Disconnected by the remote device");
-
-					final BluetoothGattService gas = gatt.getService(GENERIC_ATTRIBUTE_SERVICE_UUID);
-					final boolean hasServiceChanged = gas != null && gas.getCharacteristic(SERVICE_CHANGED_UUID) != null;
-					mService.refreshDeviceCache(gatt, !hasServiceChanged);
-
-					// Close the device
-					mService.close(gatt);
-
-					logi("Restarting the service");
-					final Intent newIntent = new Intent();
-					newIntent.fillIn(intent, Intent.FILL_IN_COMPONENT | Intent.FILL_IN_PACKAGE);
-					mService.startService(newIntent);
+					resetAndRestart(gatt, intent);
 					return;
 				}
 				if (status != DFU_STATUS_SUCCESS)
@@ -476,6 +333,14 @@ import no.nordicsemi.android.error.LegacyDfuError;
 						response = readNotificationResponse();
 						status = getStatusCode(response, OP_CODE_START_DFU_KEY);
 						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Response received (Op Code = " + response[1] + " Status = " + status + ")");
+
+						// If upload was not completed in the previous connection the INVALID_STATE status will be reported.
+						// Theoretically, the connection could be resumed from that point, but there is no guarantee, that the same firmware
+						// is to be uploaded now. It's safer to reset the device and start DFU again.
+						if (status == LegacyDfuError.INVALID_STATE) {
+							resetAndRestart(gatt, intent);
+							return;
+						}
 						if (status != DFU_STATUS_SUCCESS)
 							throw new RemoteDfuException("Starting DFU failed", status);
 					} else
@@ -488,6 +353,7 @@ import no.nordicsemi.android.error.LegacyDfuError;
 					if (fileType == DfuBaseService.TYPE_APPLICATION) {
 						// Clear the remote error flag
 						mRemoteErrorOccurred = false;
+						extendedInitPacketSupported = false;
 
 						// The DFU target does not support DFU v.2 protocol
 						logw("DFU target does not support DFU v.2");
@@ -508,20 +374,20 @@ import no.nordicsemi.android.error.LegacyDfuError;
 						response = readNotificationResponse();
 						status = getStatusCode(response, OP_CODE_START_DFU_KEY);
 						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Response received (Op Code = " + response[1] + ", Status = " + status + ")");
+
+						// If upload was not completed in the previous connection the INVALID_STATE status will be reported.
+						// Theoretically, the connection could be resumed from that point, but there is no guarantee, that the same firmware
+						// is to be uploaded now. It's safer to reset the device and start DFU again.
+						if (status == LegacyDfuError.INVALID_STATE) {
+							resetAndRestart(gatt, intent);
+							return;
+						}
 						if (status != DFU_STATUS_SUCCESS)
 							throw new RemoteDfuException("Starting DFU failed", status);
 					} else
 						throw e1;
 				}
 			}
-
-			// Since SDK 6.1 this delay is no longer required as the Receive Start DFU notification is postponed until the memory is clear.
-
-			//		if ((fileType & TYPE_SOFT_DEVICE) > 0) {
-			//			// In the experimental version of bootloader (SDK 6.0.0) we must wait some time until we can proceed with Soft Device update. Bootloader must prepare the RAM for the new firmware.
-			//			// Most likely this step will not be needed in the future as the notification received a moment before will be postponed until Bootloader is ready.
-			//          mService.waitFor(6000);
-			//		}
 
 			/*
 			 * If the DFU Version characteristic is present and the version returned from it is greater or equal to 0.5, the Extended Init Packet is required.
@@ -547,15 +413,25 @@ import no.nordicsemi.android.error.LegacyDfuError;
 			if (mInitPacketStream != null) {
 				mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Writing Initialize DFU Parameters...");
 
-				logi("Sending the Initialize DFU Parameters START (Op Code = 2, Value = 0)");
-				writeOpCode(mControlPointCharacteristic, OP_CODE_INIT_DFU_PARAMS_START);
+				if (extendedInitPacketSupported) {
+					logi("Sending the Initialize DFU Parameters START (Op Code = 2, Value = 0)");
+					writeOpCode(mControlPointCharacteristic, OP_CODE_INIT_DFU_PARAMS_START);
 
-				logi("Sending " + mImageSizeInBytes + " bytes of init packet");
-				writeInitData(mPacketCharacteristic, null);
+					logi("Sending " + mInitPacketSizeInBytes + " bytes of init packet");
+					writeInitData(mPacketCharacteristic, null);
 
-				logi("Sending the Initialize DFU Parameters COMPLETE (Op Code = 2, Value = 1)");
-				writeOpCode(mControlPointCharacteristic, OP_CODE_INIT_DFU_PARAMS_COMPLETE);
-				mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Initialize DFU Parameters completed");
+					logi("Sending the Initialize DFU Parameters COMPLETE (Op Code = 2, Value = 1)");
+					writeOpCode(mControlPointCharacteristic, OP_CODE_INIT_DFU_PARAMS_COMPLETE);
+					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Initialize DFU Parameters completed");
+				} else {
+					// In SDK 4.3 - 6.0.0 the Init Packet could have had only 2 bytes - the CRC16. START-STOP commands were not supported,
+					// instead there was just a single command 0x02, followed by a write to DFU Packet after which the device was sending a response.
+					logi("Sending the Initialize DFU Parameters (Op Code = 2)");
+					writeOpCode(mControlPointCharacteristic, OP_CODE_INIT_DFU_PARAMS);
+
+					logi("Sending " + mInitPacketSizeInBytes + " bytes of init packet");
+					writeInitData(mPacketCharacteristic, null);
+				}
 
 				// A notification will come with confirmation. Let's wait for it a bit
 				response = readNotificationResponse();
@@ -566,7 +442,10 @@ import no.nordicsemi.android.error.LegacyDfuError;
 			}
 
 			// Send the number of packets of firmware before receiving a receipt notification
-			final int numberOfPacketsBeforeNotification = mPacketsBeforeNotification;
+			// Note: DFU bootloaders from SDK 6.0.0 or older were unable to save incoming data to the flash memory with the same speed
+			//       as they are being sent from modern devices, therefore the PRNs are here force-enabled for them.
+			//       It has been tested that PRN = 10 may be the highest supported value.
+			final int numberOfPacketsBeforeNotification = extendedInitPacketSupported || (mPacketsBeforeNotification > 0 && mPacketsBeforeNotification <= 10) ? mPacketsBeforeNotification : 10;
 			if (numberOfPacketsBeforeNotification > 0) {
 				logi("Sending the number of packets before notifications (Op Code = 8, Value = " + numberOfPacketsBeforeNotification + ")");
 				setNumberOfPackets(OP_CODE_PACKET_RECEIPT_NOTIF_REQ, numberOfPacketsBeforeNotification);
@@ -596,7 +475,7 @@ import no.nordicsemi.android.error.LegacyDfuError;
 			// Check the result of the operation
 			response = readNotificationResponse();
 			status = getStatusCode(response, OP_CODE_RECEIVE_FIRMWARE_IMAGE_KEY);
-			logi("Response received. Op Code: " + response[0] + " Req Op Code = " + response[1] + ", Status = " + response[2]);
+			logi("Response received (Op Code = " + response[0] + ", Req Op Code = " + response[1] + ", Status = " + response[2] + ")");
 			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Response received (Op Code = " + response[1] + ", Status = " + status + ")");
 			if (status != DFU_STATUS_SUCCESS)
 				throw new RemoteDfuException("Device returned error after sending file", status);
@@ -612,7 +491,7 @@ import no.nordicsemi.android.error.LegacyDfuError;
 			// A notification will come with status code. Let's wait for it a bit.
 			response = readNotificationResponse();
 			status = getStatusCode(response, OP_CODE_VALIDATE_KEY);
-			logi("Response received. Op Code: " + response[0] + " Req Op Code = " + response[1] + ", Status = " + response[2]);
+			logi("Response received (Op Code = " + response[0] + ", Req Op Code = " + response[1] + ", Status = " + response[2] + ")");
 			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Response received (Op Code = " + response[1] + ", Status = " + status + ")");
 			if (status != DFU_STATUS_SUCCESS)
 				throw new RemoteDfuException("Device returned validation error", status);
@@ -688,51 +567,14 @@ import no.nordicsemi.android.error.LegacyDfuError;
 	}
 
 	/**
-	 * Reads the DFU Version characteristic if such exists. Otherwise it returns 0.
+	 * Returns the DFU Version characteristic if such exists. Otherwise it returns 0.
 	 *
 	 * @param characteristic the characteristic to read
 	 * @return a version number or 0 if not present on the bootloader
-	 * @throws DeviceDisconnectedException
-	 * @throws DfuException
-	 * @throws UploadAbortedException
 	 */
-	private int readVersion(final BluetoothGattCharacteristic characteristic) throws DeviceDisconnectedException, DfuException, UploadAbortedException {
-		if (!mConnected)
-			throw new DeviceDisconnectedException("Unable to read version number: device disconnected");
-		if (mAborted)
-			throw new UploadAbortedException();
-		// If the DFU Version characteristic is not available we return 0.
-		if (characteristic == null)
-			return 0;
-
-		mReceivedData = null;
-		mError = 0;
-
-		logi("Reading DFU version number...");
-		mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_VERBOSE, "Reading DFU version number...");
-
-		characteristic.setValue((byte[]) null);
-		mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_DEBUG, "gatt.readCharacteristic(" + characteristic.getUuid() + ")");
-		mGatt.readCharacteristic(characteristic);
-
-		// We have to wait until device receives a response or an error occur
-		try {
-			synchronized (mLock) {
-				while (((!mRequestCompleted || characteristic.getValue() == null ) && mConnected && mError == 0 && !mAborted) || mPaused) {
-					mRequestCompleted = false;
-					mLock.wait();
-				}
-			}
-		} catch (final InterruptedException e) {
-			loge("Sleeping interrupted", e);
-		}
-		if (mError != 0)
-			throw new DfuException("Unable to read version number", mError);
-		if (!mConnected)
-			throw new DeviceDisconnectedException("Unable to read version number: device disconnected");
-
-		// The version is a 16-bit unsigned int
-		return characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 0);
+	private int readVersion(final BluetoothGattCharacteristic characteristic) {
+		// The value of this characteristic has been read before by LegacyButtonlessDfuImpl
+		return characteristic != null ? characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 0) : 0;
 	}
 
 	/**
@@ -840,5 +682,38 @@ import no.nordicsemi.android.error.LegacyDfuError;
 			throw new DfuException("Unable to write Image Sizes", mError);
 		if (!mConnected)
 			throw new DeviceDisconnectedException("Unable to write Image Sizes: device disconnected");
+	}
+
+	/**
+	 * Sends Reset command to the target device to reset its state and restarts the DFU Service that will start again.
+	 * @param gatt the GATT device
+	 * @param intent intent used to start the service
+	 * @throws DfuException
+	 * @throws DeviceDisconnectedException
+	 * @throws UploadAbortedException
+	 */
+	private void resetAndRestart(final BluetoothGatt gatt, final Intent intent) throws DfuException, DeviceDisconnectedException, UploadAbortedException {
+		mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, "Last upload interrupted. Restarting device...");
+		// Send 'jump to bootloader command' (Start DFU)
+		mProgressInfo.setProgress(DfuBaseService.PROGRESS_DISCONNECTING);
+		logi("Sending Reset command (Op Code = 6)");
+		writeOpCode(mControlPointCharacteristic, OP_CODE_RESET);
+		mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_APPLICATION, "Reset request sent");
+
+		// The device will reset so we don't have to send Disconnect signal.
+		mService.waitUntilDisconnected();
+		mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_INFO, "Disconnected by the remote device");
+
+		final BluetoothGattService gas = gatt.getService(GENERIC_ATTRIBUTE_SERVICE_UUID);
+		final boolean hasServiceChanged = gas != null && gas.getCharacteristic(SERVICE_CHANGED_UUID) != null;
+		mService.refreshDeviceCache(gatt, !hasServiceChanged);
+
+		// Close the device
+		mService.close(gatt);
+
+		logi("Restarting the service");
+		final Intent newIntent = new Intent();
+		newIntent.fillIn(intent, Intent.FILL_IN_COMPONENT | Intent.FILL_IN_PACKAGE);
+		restartService(newIntent, false);
 	}
 }

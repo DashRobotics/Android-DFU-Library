@@ -38,15 +38,20 @@ import no.nordicsemi.android.dfu.internal.ArchiveInputStream;
 import no.nordicsemi.android.dfu.internal.exception.DeviceDisconnectedException;
 import no.nordicsemi.android.dfu.internal.exception.DfuException;
 import no.nordicsemi.android.dfu.internal.exception.RemoteDfuException;
+import no.nordicsemi.android.dfu.internal.exception.RemoteDfuExtendedErrorException;
 import no.nordicsemi.android.dfu.internal.exception.UnknownResponseException;
 import no.nordicsemi.android.dfu.internal.exception.UploadAbortedException;
 import no.nordicsemi.android.error.SecureDfuError;
 
 /* package */ class SecureDfuImpl extends BaseCustomDfuImpl {
 	// UUIDs used by the DFU
-	protected static final UUID DFU_SERVICE_UUID       = new UUID(0x0000FE5900001000L, 0x800000805F9B34FBL); // 16-bit UUID assigned by Bluetooth SIG
-	protected static final UUID DFU_CONTROL_POINT_UUID = new UUID(0x8EC90001F3154F60L, 0x9FB8838830DAEA50L);
-	protected static final UUID DFU_PACKET_UUID        = new UUID(0x8EC90002F3154F60L, 0x9FB8838830DAEA50L);
+	protected static final UUID DEFAULT_DFU_SERVICE_UUID       = new UUID(0x0000FE5900001000L, 0x800000805F9B34FBL); // 16-bit UUID assigned by Bluetooth SIG
+	protected static final UUID DEFAULT_DFU_CONTROL_POINT_UUID = new UUID(0x8EC90001F3154F60L, 0x9FB8838830DAEA50L);
+	protected static final UUID DEFAULT_DFU_PACKET_UUID        = new UUID(0x8EC90002F3154F60L, 0x9FB8838830DAEA50L);
+
+	protected static UUID DFU_SERVICE_UUID       = DEFAULT_DFU_SERVICE_UUID;
+	protected static UUID DFU_CONTROL_POINT_UUID = DEFAULT_DFU_CONTROL_POINT_UUID;
+	protected static UUID DFU_PACKET_UUID        = DEFAULT_DFU_PACKET_UUID;
 
 	private static final int DFU_STATUS_SUCCESS = 1;
 	private static final int MAX_ATTEMPTS = 3;
@@ -59,7 +64,6 @@ import no.nordicsemi.android.error.SecureDfuError;
 	private static final int OP_CODE_PACKET_RECEIPT_NOTIF_REQ_KEY = 0x02;
 	private static final int OP_CODE_CALCULATE_CHECKSUM_KEY = 0x03;
 	private static final int OP_CODE_EXECUTE_KEY = 0x04;
-	private static final int OP_CODE_READ_ERROR_KEY = 0x05;
 	private static final int OP_CODE_SELECT_OBJECT_KEY = 0x06;
 	private static final int OP_CODE_RESPONSE_CODE_KEY = 0x60;
 	private static final byte[] OP_CODE_CREATE_COMMAND = new byte[]{OP_CODE_CREATE_KEY, OBJECT_COMMAND, 0x00, 0x00, 0x00, 0x00 };
@@ -67,7 +71,6 @@ import no.nordicsemi.android.error.SecureDfuError;
 	private static final byte[] OP_CODE_PACKET_RECEIPT_NOTIF_REQ = new byte[]{OP_CODE_PACKET_RECEIPT_NOTIF_REQ_KEY, 0x00, 0x00 /* param PRN uint16 in Little Endian */};
 	private static final byte[] OP_CODE_CALCULATE_CHECKSUM = new byte[]{OP_CODE_CALCULATE_CHECKSUM_KEY};
 	private static final byte[] OP_CODE_EXECUTE = new byte[]{OP_CODE_EXECUTE_KEY};
-	private static final byte[] OP_CODE_READ_ERROR = new byte[]{OP_CODE_READ_ERROR_KEY};
 	private static final byte[] OP_CODE_SELECT_OBJECT = new byte[]{OP_CODE_SELECT_OBJECT_KEY, 0x00 /* type */};
 
 	private BluetoothGattCharacteristic mControlPointCharacteristic;
@@ -101,9 +104,8 @@ import no.nordicsemi.android.error.SecureDfuError;
 					}
 					default: {
 						/*
-						 * If the DFU target device is in invalid state (f.e. the Init Packet is required but has not been selected), the target will send DFU_STATUS_INVALID_STATE error
+						 * If the DFU target device is in invalid state (e.g. the Init Packet is required but has not been selected), the target will send DFU_STATUS_INVALID_STATE error
 						 * for each firmware packet that was send. We are interested may ignore all but the first one.
-						 * After obtaining a remote DFU error the OP_CODE_RESET_KEY will be sent.
 						 */
 						if (mRemoteErrorOccurred)
 							break;
@@ -128,9 +130,13 @@ import no.nordicsemi.android.error.SecureDfuError;
 	}
 
 	@Override
-	public boolean hasRequiredService(final BluetoothGatt gatt) {
+	public boolean isClientCompatible(final Intent intent, final BluetoothGatt gatt) {
 		final BluetoothGattService dfuService = gatt.getService(DFU_SERVICE_UUID);
-		return dfuService != null;
+		if (dfuService == null)
+			return false;
+		mControlPointCharacteristic = dfuService.getCharacteristic(DFU_CONTROL_POINT_UUID);
+		mPacketCharacteristic = dfuService.getCharacteristic(DFU_PACKET_UUID);
+		return mControlPointCharacteristic != null && mPacketCharacteristic != null;
 	}
 
 	@Override
@@ -145,15 +151,7 @@ import no.nordicsemi.android.error.SecureDfuError;
 	}
 
 	@Override
-	public boolean hasRequiredCharacteristics(final BluetoothGatt gatt) {
-		final BluetoothGattService dfuService = gatt.getService(DFU_SERVICE_UUID);
-		mControlPointCharacteristic = dfuService.getCharacteristic(DFU_CONTROL_POINT_UUID);
-		mPacketCharacteristic = dfuService.getCharacteristic(DFU_PACKET_UUID);
-		return mControlPointCharacteristic != null && mPacketCharacteristic != null;
-	}
-
-	@Override
-	protected BaseBluetoothGattCallback getGattCallback() {
+	public BaseBluetoothGattCallback getGattCallback() {
 		return mBluetoothCallback;
 	}
 
@@ -174,6 +172,7 @@ import no.nordicsemi.android.error.SecureDfuError;
 
 	@Override
 	public void performDfu(final Intent intent) throws DfuException, DeviceDisconnectedException, UploadAbortedException {
+		logw("Secure DFU bootloader found");
 		mProgressInfo.setProgress(DfuBaseService.PROGRESS_STARTING);
 
 		// Add one second delay to avoid the traffic jam before the DFU mode is enabled
@@ -221,20 +220,10 @@ import no.nordicsemi.android.error.SecureDfuError;
 			mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_ERROR, String.format("Remote DFU error: %s", SecureDfuError.parse(error)));
 
 			// For the Extended Error more details can be obtained on some devices.
-			if (e.getErrorNumber() == SecureDfuError.EXTENDED_ERROR) {
-				try {
-					final ErrorMessage details = readExtendedError();
-					if (details != null) {
-						logi("Error details: " + details.message + " (Code = " + details.code + ")");
-						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_ERROR, "Details: " + details.message + " (Code = " + details.code + ")");
-					} else {
-						logi("Reading error details not supported");
-						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, "Reading error details not supported");
-					}
-				} catch (final Exception e1) {
-					loge("Reading error details failed", e1);
-					mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, "Reading error details failed");
-				}
+			if (e instanceof RemoteDfuExtendedErrorException) {
+				final RemoteDfuExtendedErrorException ee = (RemoteDfuExtendedErrorException) e;
+				logi("Extended Error details: " + SecureDfuError.parseExtendedError(ee.getExtendedErrorNumber()));
+				mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_ERROR, "Details: " + SecureDfuError.parseExtendedError(ee.getExtendedErrorNumber()) + " (Code = " + ee.getExtendedErrorNumber() + ")");
 			}
 			mService.terminateConnection(gatt, error);
 		}
@@ -526,12 +515,17 @@ import no.nordicsemi.android.error.SecureDfuError;
 					// Increment iterator
 					currentChunk++;
 					attempt = 1;
+					//Mark this location after completion of successful transfer.  In the event of a CRC retry on the next packet we will restart from this point.
+					mFirmwareStream.mark(0);
 				} else {
+					String crcFailMessage = String.format(Locale.US, "CRC does not match! Expected %08X but found %08X.", crc, checksum.CRC32);
 					if (attempt < MAX_ATTEMPTS) {
 						attempt++;
-						logi("CRC does not match! Retrying...(" + attempt + "/" + MAX_ATTEMPTS + ")");
-						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, "CRC does not match! Retrying...(" + attempt + "/" + MAX_ATTEMPTS + ")");
+						crcFailMessage += String.format(Locale.US, " Retrying...(%d/%d)", attempt, MAX_ATTEMPTS);
+						logi(crcFailMessage);
+						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_WARNING, crcFailMessage);
 						try {
+							// Reset the CRC and file pointer back to the previous mark() point after completion of the last successful packet.
 							mFirmwareStream.reset();
 							mProgressInfo.setBytesSent(checksum.offset - info.maxSize);
 						} catch (final IOException e) {
@@ -540,8 +534,8 @@ import no.nordicsemi.android.error.SecureDfuError;
 							return;
 						}
 					} else {
-						loge("CRC does not match!");
-						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_ERROR, "CRC does not match!");
+						loge(crcFailMessage);
+						mService.sendLogBroadcast(DfuBaseService.LOG_LEVEL_ERROR, crcFailMessage);
 						mService.terminateConnection(gatt, DfuBaseService.ERROR_CRC_ERROR);
 						return;
 					}
@@ -631,6 +625,8 @@ import no.nordicsemi.android.error.SecureDfuError;
 		// Read response
 		final byte[] response = readNotificationResponse();
 		final int status = getStatusCode(response, OP_CODE_PACKET_RECEIPT_NOTIF_REQ_KEY);
+		if (status == SecureDfuError.EXTENDED_ERROR)
+			throw new RemoteDfuExtendedErrorException("Sending the number of packets failed", response[3]);
 		if (status != DFU_STATUS_SUCCESS)
 			throw new RemoteDfuException("Sending the number of packets failed", status);
 	}
@@ -671,56 +667,10 @@ import no.nordicsemi.android.error.SecureDfuError;
 
 		final byte[] response = readNotificationResponse();
 		final int status = getStatusCode(response, OP_CODE_CREATE_KEY);
+		if (status == SecureDfuError.EXTENDED_ERROR)
+			throw new RemoteDfuExtendedErrorException("Creating Command object failed", response[3]);
 		if (status != DFU_STATUS_SUCCESS)
 			throw new RemoteDfuException("Creating Command object failed", status);
-	}
-
-	/**
-	 * Reads the last error message from the device. This can be executed after a {@link SecureDfuError#EXTENDED_ERROR} status is received
-	 * from any Execute operation.
-	 *
-	 * @return the error details or null if this feature is not supported
-	 * @throws DeviceDisconnectedException
-	 * @throws DfuException
-	 * @throws UploadAbortedException
-	 * @throws RemoteDfuException thrown when the returned status code is not equal to {@link #DFU_STATUS_SUCCESS}
-	 */
-	private ErrorMessage readExtendedError() throws DeviceDisconnectedException, DfuException, UploadAbortedException, RemoteDfuException, UnknownResponseException {
-		if (!mConnected)
-			throw new DeviceDisconnectedException("Unable to read object info: device disconnected");
-
-		mRemoteErrorOccurred = false;
-		final BluetoothGattCharacteristic characteristic = mControlPointCharacteristic;
-		writeOpCode(characteristic, OP_CODE_READ_ERROR);
-
-		final byte[] response = readNotificationResponse();
-		final int status = getStatusCode(response, OP_CODE_READ_ERROR_KEY);
-
-		if (status == DFU_STATUS_SUCCESS) {
-			final int code = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 3);
-			int length = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 5);
-			if (code == 0 && length == 0)
-				return null;
-
-			final StringBuilder builder = new StringBuilder();
-			builder.append(characteristic.getStringValue(7));
-
-			while (length - builder.length() > 0) {
-				writeOpCode(characteristic, OP_CODE_READ_ERROR);
-				readNotificationResponse();
-				builder.append(characteristic.getStringValue(3));
-
-				// Finish if byte 0 is received at the end
-				if (characteristic.getValue()[characteristic.getValue().length - 1] == 0)
-					break;
-			}
-
-			final ErrorMessage error = new ErrorMessage();
-			error.code = code;
-			error.message = builder.toString();
-			return error;
-		}
-		return null;
 	}
 
 	/**
@@ -741,6 +691,8 @@ import no.nordicsemi.android.error.SecureDfuError;
 
 		final byte[] response = readNotificationResponse();
 		final int status = getStatusCode(response, OP_CODE_SELECT_OBJECT_KEY);
+		if (status == SecureDfuError.EXTENDED_ERROR)
+			throw new RemoteDfuExtendedErrorException("Selecting object failed", response[3]);
 		if (status != DFU_STATUS_SUCCESS)
 			throw new RemoteDfuException("Selecting object failed", status);
 
@@ -768,6 +720,8 @@ import no.nordicsemi.android.error.SecureDfuError;
 
 		final byte[] response = readNotificationResponse();
 		final int status = getStatusCode(response, OP_CODE_CALCULATE_CHECKSUM_KEY);
+		if (status == SecureDfuError.EXTENDED_ERROR)
+			throw new RemoteDfuExtendedErrorException("Receiving Checksum failed", response[3]);
 		if (status != DFU_STATUS_SUCCESS)
 			throw new RemoteDfuException("Receiving Checksum failed", status);
 
@@ -796,6 +750,8 @@ import no.nordicsemi.android.error.SecureDfuError;
 
 		final byte[] response = readNotificationResponse();
 		final int status = getStatusCode(response, OP_CODE_EXECUTE_KEY);
+		if (status == SecureDfuError.EXTENDED_ERROR)
+			throw new RemoteDfuExtendedErrorException("Executing object failed", response[3]);
 		if (status != DFU_STATUS_SUCCESS)
 			throw new RemoteDfuException("Executing object failed", status);
 	}
@@ -807,10 +763,5 @@ import no.nordicsemi.android.error.SecureDfuError;
 	private class ObjectChecksum {
 		protected int offset;
 		protected int CRC32;
-	}
-
-	private class ErrorMessage {
-		protected int code;
-		protected String message;
 	}
 }

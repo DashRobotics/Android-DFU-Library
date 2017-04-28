@@ -1,5 +1,5 @@
 /*************************************************************************************************************************************************
- * Copyright (c) 2016, Nordic Semiconductor
+ * Copyright (c) 2015, Nordic Semiconductor
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -20,31 +20,30 @@
  * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  ************************************************************************************************************************************************/
 
-package no.nordicsemi.android.dfu;
+package no.nordicsemi.android.dfu.internal.exception;
 
-import android.bluetooth.BluetoothGatt;
-import android.content.Intent;
+import no.nordicsemi.android.error.SecureDfuError;
 
-import java.io.InputStream;
+/**
+ * A DFU error occurred on the remote DFU target.
+ */
+public class RemoteDfuExtendedErrorException extends RemoteDfuException {
+	private static final long serialVersionUID = -6901728550661937942L;
 
-import no.nordicsemi.android.dfu.internal.exception.DeviceDisconnectedException;
-import no.nordicsemi.android.dfu.internal.exception.DfuException;
-import no.nordicsemi.android.dfu.internal.exception.UploadAbortedException;
+	private final int mError;
 
-/* package */ interface DfuService extends DfuCallback {
+	public RemoteDfuExtendedErrorException(final String message, final int extendedError) {
+		super(message, SecureDfuError.EXTENDED_ERROR);
 
-	/** This method must return true if the device is compatible with this DFU implementation, false otherwise. */
-	boolean isClientCompatible(final Intent intent, final BluetoothGatt gatt) throws DfuException, DeviceDisconnectedException, UploadAbortedException;
+		mError = extendedError;
+	}
 
-	/**
-	 * Initializes the DFU implementation and does some initial setting up.
-	 * @return true if initialization was successful and the DFU process may begin, false to finish teh DFU service
-	 */
-	boolean initialize(final Intent intent, final BluetoothGatt gatt, final int fileType, final InputStream firmwareStream, final InputStream initPacketStream) throws DfuException, DeviceDisconnectedException, UploadAbortedException;
+	public int getExtendedErrorNumber() {
+		return mError;
+	}
 
-	/** Performs the DFU process. */
-	void performDfu(final Intent intent) throws DfuException, DeviceDisconnectedException, UploadAbortedException;
-
-	/** Releases the service. */
-	void release();
+	@Override
+	public String getMessage() {
+		return super.getMessage() + " (error 11." + mError + ")";
+	}
 }
