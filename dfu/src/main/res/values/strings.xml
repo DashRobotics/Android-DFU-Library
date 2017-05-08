@@ -1,38 +1,38 @@
 <resources>
 
-    <string name="dfu_unknown_name">unnamed device</string>
+    <string name="dfu_unknown_name" translatable="false">unnamed device</string>
     
-    <string name="dfu_action_abort">Abort</string>
+    <string name="dfu_action_abort" translatable="false">Abort</string>
 
-    <string name="dfu_status_initializing">Initializing&#8230;</string>
-    <string name="dfu_status_connecting">Connecting&#8230;</string>
-    <string name="dfu_status_starting">Starting DFU&#8230;</string>
-    <string name="dfu_status_switching_to_dfu">Starting bootloader&#8230;</string>
-    <string name="dfu_status_uploading">Uploading&#8230;</string>
-    <string name="dfu_status_uploading_part" formatted="false">Uploading part %d/%d&#8230;</string>
-    <string name="dfu_status_validating">Validating&#8230;</string>
-    <string name="dfu_status_disconnecting">Disconnecting&#8230;</string>
-    <string name="dfu_status_completed">Done</string>
-    <string name="dfu_status_aborted">Aborted</string>
-    <string name="dfu_status_aborting">Aborting&#8230;</string>
-    <string name="dfu_status_error">Upload failed</string>
+    <string name="dfu_status_initializing" translatable="false">Initializing&#8230;</string>
+    <string name="dfu_status_connecting" translatable="false">Connecting&#8230;</string>
+    <string name="dfu_status_starting" translatable="false">Starting DFU&#8230;</string>
+    <string name="dfu_status_switching_to_dfu" translatable="false">Starting bootloader&#8230;</string>
+    <string name="dfu_status_uploading" translatable="false">Uploading&#8230;</string>
+    <string name="dfu_status_uploading_part" formatted="false" translatable="false">Uploading part %d/%d&#8230;</string>
+    <string name="dfu_status_validating" translatable="false">Validating&#8230;</string>
+    <string name="dfu_status_disconnecting" translatable="false">Disconnecting&#8230;</string>
+    <string name="dfu_status_completed" translatable="false">Done</string>
+    <string name="dfu_status_aborted" translatable="false">Aborted</string>
+    <string name="dfu_status_aborting" translatable="false">Aborting&#8230;</string>
+    <string name="dfu_status_error" translatable="false">Upload failed</string>
     
-    <string name="dfu_status_connecting_msg">Connecting to %s&#8230;</string>
-    <string name="dfu_status_starting_msg">Initializing DFU process&#8230;</string>
-    <string name="dfu_status_switching_to_dfu_msg">Waiting for bootloader&#8230;</string>
-    <string name="dfu_status_uploading_msg">Transmitting firmware to %s&#8230;</string>
-    <string name="dfu_status_validating_msg">Validating&#8230;</string>
-    <string name="dfu_status_completed_msg">Application has been sent successfully.</string>
-    <string name="dfu_status_aborted_msg">Application upload has been canceled.</string>
-    <string name="dfu_status_disconnecting_msg">Disconnecting from %s&#8230;</string>
-    <string name="dfu_status_error_msg">DFU process failed.</string>
+    <string name="dfu_status_connecting_msg" translatable="false">Connecting to %s&#8230;</string>
+    <string name="dfu_status_starting_msg" translatable="false">Initializing DFU process&#8230;</string>
+    <string name="dfu_status_switching_to_dfu_msg" translatable="false">Waiting for bootloader&#8230;</string>
+    <string name="dfu_status_uploading_msg" translatable="false">Transmitting firmware to %s&#8230;</string>
+    <string name="dfu_status_validating_msg" translatable="false">Validating&#8230;</string>
+    <string name="dfu_status_completed_msg" translatable="false">Application has been sent successfully.</string>
+    <string name="dfu_status_aborted_msg" translatable="false">Application upload has been canceled.</string>
+    <string name="dfu_status_disconnecting_msg" translatable="false">Disconnecting from %s&#8230;</string>
+    <string name="dfu_status_error_msg" translatable="false">DFU process failed.</string>
 
-    <string name="NORDIC_DFU_service_uuid">00001530-1212-efde-1523-785feabcd123</string>
-    <string name="NORDIC_DFU_control_point_uuid">00001531-1212-efde-1523-785feabcd123</string>
-    <string name="NORDIC_DFU_packet_uuid">00001532-1212-efde-1523-785feabcd123</string>
-    <string name="NORDIC_DFU_version_uuid">00001534-6b09-45c8-be6d-4bb4e0471435</string>
-    <string name="NORDIC_DFU_generic_attribute_service_uuid">00001801-0000-1000-8000-00805f9b34fb</string>
-    <string name="NORDIC_DFU_service_changed_uuid">00002a05-0000-1000-8000-00805f9b34fb</string>
-    <string name="NORDIC_DFU_client_characteristic_config_uuid">00002902-0000-1000-8000-00805f9b34fb</string>
+    <string name="NORDIC_DFU_service_uuid" translatable="false">00001530-1212-efde-1523-785feabcd123</string>
+    <string name="NORDIC_DFU_control_point_uuid" translatable="false">00001531-1212-efde-1523-785feabcd123</string>
+    <string name="NORDIC_DFU_packet_uuid" translatable="false">00001532-1212-efde-1523-785feabcd123</string>
+    <string name="NORDIC_DFU_version_uuid" translatable="false">00001534-6b09-45c8-be6d-4bb4e0471435</string>
+    <string name="NORDIC_DFU_generic_attribute_service_uuid" translatable="false">00001801-0000-1000-8000-00805f9b34fb</string>
+    <string name="NORDIC_DFU_service_changed_uuid" translatable="false">00002a05-0000-1000-8000-00805f9b34fb</string>
+    <string name="NORDIC_DFU_client_characteristic_config_uuid" translatable="false">00002902-0000-1000-8000-00805f9b34fb</string>
 
 </resources>
